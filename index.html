@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hogwarts Halloween House Sorting</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         @keyframes fade-in {
             from { opacity: 0; transform: translateY(20px); }
@@ -17,6 +18,10 @@
             margin: 0;
             padding: 0;
             overflow-x: hidden;
+        }
+        .house-column {
+            max-height: 500px;
+            overflow-y: auto;
         }
     </style>
 </head>
@@ -38,9 +43,7 @@
         ];
 
         function HouseSorting() {
-            const [stage, setStage] = useState('welcome');
-            const [totalWizards, setTotalWizards] = useState('');
-            const [currentWizard, setCurrentWizard] = useState(1);
+            const [stage, setStage] = useState('sorting');
             const [wizardName, setWizardName] = useState('');
             const [sorting, setSorting] = useState(false);
             const [selectedHouse, setSelectedHouse] = useState(null);
@@ -48,8 +51,8 @@
             const [houseMembers, setHouseMembers] = useState([[], [], [], []]);
             const [shuffling, setShuffling] = useState([]);
             const [audioElements, setAudioElements] = useState({});
-            const [audioLoaded, setAudioLoaded] = useState(false);
-            const [audioError, setAudioError] = useState('');
+            const [namesExpanded, setNamesExpanded] = useState(true);
+            const [totalSorted, setTotalSorted] = useState(0);
 
             useEffect(() => {
                 loadAudioFiles();
@@ -65,31 +68,19 @@
                 };
 
                 const loadedAudio = {};
-                let loadCount = 0;
-                const totalFiles = Object.keys(audioFiles).length;
 
                 for (const [key, filename] of Object.entries(audioFiles)) {
                     try {
                         const audio = new Audio(filename);
-
                         audio.addEventListener('canplaythrough', () => {
-                            loadCount++;
-                            console.log(`✓ Loaded ${filename} (${loadCount}/${totalFiles})`);
-                            if (loadCount === totalFiles) {
-                                setAudioLoaded(true);
-                                setAudioError('');
-                            }
+                            console.log(`✓ Loaded ${filename}`);
                         });
-
                         audio.addEventListener('error', (e) => {
                             console.error(`✗ Failed to load ${filename}:`, e);
-                            setAudioError(`Failed to load ${filename}. Make sure all MP3 files are in the same folder.`);
                         });
-
                         loadedAudio[key] = audio;
                     } catch (error) {
                         console.error(`Failed to create audio for ${filename}:`, error);
-                        setAudioError(`Error creating audio: ${error.message}`);
                     }
                 }
 
@@ -100,18 +91,11 @@
                 if (audioElements[soundKey]) {
                     audioElements[soundKey].currentTime = 0;
                     const playPromise = audioElements[soundKey].play();
-
                     if (playPromise !== undefined) {
                         playPromise
-                            .then(() => {
-                                console.log(`✓ Playing ${soundKey}`);
-                            })
-                            .catch(e => {
-                                console.error(`✗ Audio play failed for ${soundKey}:`, e);
-                            });
+                            .then(() => console.log(`✓ Playing ${soundKey}`))
+                            .catch(e => console.error(`✗ Audio play failed for ${soundKey}:`, e));
                     }
-                } else {
-                    console.error(`Audio element ${soundKey} not found`);
                 }
             };
 
@@ -119,20 +103,6 @@
                 if (audioElements[soundKey]) {
                     audioElements[soundKey].pause();
                     audioElements[soundKey].currentTime = 0;
-                }
-            };
-
-            const startSorting = () => {
-                const num = parseInt(totalWizards);
-                if (num && num > 0) {
-                    setStage('sorting');
-                    setCurrentWizard(1);
-                    setHouseCounts([0, 0, 0, 0]);
-                    setHouseMembers([[], [], [], []]);
-                    setSelectedHouse(null);
-                    setWizardName('');
-                } else {
-                    alert('Please enter a valid number greater than 0!');
                 }
             };
 
@@ -145,38 +115,10 @@
                 setSorting(true);
                 playSound('sorting');
 
-                const totalWiz = parseInt(totalWizards);
-                const remainingWizards = totalWiz - currentWizard + 1;
-                
-                // Calculate how many spots are still available in each house
-                const basePerHouse = Math.floor(totalWiz / 4);
-                const remainder = totalWiz % 4;
-                
-                // Determine max capacity for each house
-                const maxCapacity = [0, 1, 2, 3].map(index => 
-                    index < remainder ? basePerHouse + 1 : basePerHouse
-                );
-                
-                // Find which houses can still accept wizards
+                // Keep houses balanced - only pick from houses that are not ahead
+                const minCount = Math.min(...houseCounts);
                 const availableHouses = houseCounts
-                    .map((count, index) => {
-                        const spotsLeft = maxCapacity[index] - count;
-                        // A house is available if it has spots AND
-                        // leaving it empty won't make it impossible to fill other houses
-                        const totalSpotsInOtherHouses = maxCapacity.reduce((sum, max, i) => 
-                            i !== index ? sum + (max - houseCounts[i]) : sum, 0
-                        );
-                        
-                        // Only exclude if this house MUST take someone to make math work
-                        if (spotsLeft > 0 && totalSpotsInOtherHouses >= remainingWizards - 1) {
-                            return index;
-                        }
-                        // Include house if it must be picked
-                        if (spotsLeft > 0) {
-                            return index;
-                        }
-                        return null;
-                    })
+                    .map((count, index) => count === minCount ? index : null)
                     .filter(index => index !== null);
 
                 const chosenHouseIndex = availableHouses[Math.floor(Math.random() * availableHouses.length)];
@@ -188,8 +130,6 @@
 
                     if (shuffleCount >= 40) {
                         clearInterval(shuffleInterval);
-                        
-                        // Stop the sorting sound
                         stopSound('sorting');
 
                         setSelectedHouse(chosenHouseIndex);
@@ -203,10 +143,10 @@
                             newMembers[chosenHouseIndex] = [...newMembers[chosenHouseIndex], wizardName.trim()];
                             return newMembers;
                         });
+                        setTotalSorted(prev => prev + 1);
                         setSorting(false);
                         setShuffling([]);
 
-                        // Play house announcement immediately after stopping sorting sound
                         const houseName = houses[chosenHouseIndex].name.toLowerCase();
                         playSound(houseName);
                     }
@@ -214,23 +154,33 @@
             };
 
             const nextWizard = () => {
-                if (currentWizard < parseInt(totalWizards)) {
-                    setCurrentWizard(prev => prev + 1);
-                    setSelectedHouse(null);
-                    setWizardName('');
-                } else {
-                    setStage('results');
-                }
+                setSelectedHouse(null);
+                setWizardName('');
+            };
+
+            const finishSorting = () => {
+                setStage('results');
             };
 
             const reset = () => {
-                setStage('welcome');
-                setTotalWizards('');
-                setCurrentWizard(1);
+                setStage('sorting');
                 setWizardName('');
                 setSelectedHouse(null);
                 setHouseCounts([0, 0, 0, 0]);
                 setHouseMembers([[], [], [], []]);
+                setTotalSorted(0);
+            };
+
+            const downloadPDF = () => {
+                const element = document.getElementById('results-content');
+                const opt = {
+                    margin: 0.5,
+                    filename: 'hogwarts-house-sorting-results.pdf',
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { scale: 2 },
+                    jsPDF: { unit: 'in', format: 'letter', orientation: 'landscape' }
+                };
+                html2pdf().set(opt).from(element).save();
             };
 
             return (
@@ -244,43 +194,30 @@
                     </div>
 
                     <div className="max-w-6xl mx-auto relative z-10">
-                        {stage === 'welcome' && (
-                            <div className="text-center space-y-8 animate-fade-in">
-                                <div className="text-7xl mb-4">🏰</div>
-                                <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent">
-                                    Hogwarts Halloween
-                                </h1>
-                                <h2 className="text-4xl font-bold text-orange-400 mb-8">House Sorting Ceremony</h2>
-
-                                <div className="bg-black/50 backdrop-blur-sm border-2 border-orange-500 rounded-lg p-8 max-w-md mx-auto">
-                                    <div className="flex items-center justify-center gap-2 mb-4">
-                                        <span className="text-purple-400 text-3xl">👥</span>
-                                        <label className="text-2xl text-purple-300">Number of Wizards</label>
-                                    </div>
-                                    <input
-                                        type="number"
-                                        value={totalWizards}
-                                        onChange={(e) => setTotalWizards(e.target.value)}
-                                        placeholder="Enter any number"
-                                        className="w-full p-4 text-2xl text-center bg-gray-800 border-2 border-purple-500 rounded-lg text-white mb-6"
-                                    />
-                                    <button
-                                        onClick={startSorting}
-                                        className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200 flex items-center justify-center gap-2"
-                                    >
-                                        <span className="text-3xl">✨</span>
-                                        Begin Sorting
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
                         {stage === 'sorting' && (
                             <div className="space-y-8">
                                 <div className="text-center">
-                                    <h2 className="text-5xl font-bold text-orange-400 mb-4">
-                                        Wizard #{currentWizard} of {totalWizards}
-                                    </h2>
+                                    <div className="text-7xl mb-4">🏰</div>
+                                    <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent">
+                                        Hogwarts Halloween
+                                    </h1>
+                                    <h2 className="text-4xl font-bold text-orange-400 mb-2">House Sorting Ceremony</h2>
+                                    <p className="text-2xl text-purple-300 mb-6">Total Sorted: {totalSorted}</p>
+
+                                    <div className="flex justify-center gap-4 mb-8">
+                                        <button
+                                            onClick={() => setNamesExpanded(!namesExpanded)}
+                                            className="bg-purple-600 hover:bg-purple-700 text-white text-lg font-bold py-2 px-6 rounded-lg transition-all duration-200"
+                                        >
+                                            {namesExpanded ? '📋 Hide Names' : '📋 Show Names'}
+                                        </button>
+                                        <button
+                                            onClick={finishSorting}
+                                            className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-lg font-bold py-2 px-6 rounded-lg transition-all duration-200"
+                                        >
+                                            🏁 Finish Sorting
+                                        </button>
+                                    </div>
 
                                     <div className="grid grid-cols-4 gap-4 mb-8">
                                         {houses.map((house, index) => (
@@ -288,13 +225,15 @@
                                                 <div className="text-4xl mb-2">{house.emoji}</div>
                                                 <div className="font-bold text-lg">{house.name}</div>
                                                 <div className="text-2xl font-bold">{houseCounts[index]}</div>
-                                                <div className="mt-2 max-h-32 overflow-y-auto text-sm space-y-1">
-                                                    {houseMembers[index].map((member, idx) => (
-                                                        <div key={idx} className="bg-black/30 rounded px-2 py-1 animate-fade-in">
-                                                            {member}
-                                                        </div>
-                                                    ))}
-                                                </div>
+                                                {namesExpanded && (
+                                                    <div className="mt-2 max-h-32 overflow-y-auto text-sm space-y-1">
+                                                        {houseMembers[index].map((member, idx) => (
+                                                            <div key={idx} className="bg-black/30 rounded px-2 py-1 animate-fade-in">
+                                                                {member}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
@@ -322,7 +261,7 @@
                                                 const rotateY = sorting ? shuffle * 720 : 0;
                                                 const rotateZ = sorting ? (shuffle - 0.5) * 180 : 0;
                                                 const scale = sorting ? 0.8 + (Math.sin(shuffle * Math.PI * 8) * 0.3) : 1;
-                                                
+
                                                 return (
                                                     <div
                                                         key={house.name}
@@ -363,24 +302,20 @@
                                         </div>
 
                                         <div className="flex gap-4 justify-center flex-wrap">
-                                            {currentWizard < parseInt(totalWizards) && (
-                                                <button
-                                                    onClick={nextWizard}
-                                                    className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200"
-                                                >
-                                                    Sort Next Wizard
-                                                </button>
-                                            )}
+                                            <button
+                                                onClick={nextWizard}
+                                                className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200"
+                                            >
+                                                Sort Next Wizard
+                                            </button>
 
-                                            {currentWizard === parseInt(totalWizards) && (
-                                                <button
-                                                    onClick={() => setStage('results')}
-                                                    className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200 flex items-center gap-2"
-                                                >
-                                                    <span className="text-2xl">🏆</span>
-                                                    View All Houses
-                                                </button>
-                                            )}
+                                            <button
+                                                onClick={finishSorting}
+                                                className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200 flex items-center gap-2"
+                                            >
+                                                <span className="text-2xl">🏆</span>
+                                                Finish & View Results
+                                            </button>
 
                                             <button
                                                 onClick={reset}
@@ -397,36 +332,46 @@
 
                         {stage === 'results' && (
                             <div className="space-y-8 animate-fade-in">
-                                <div className="text-center mb-8">
-                                    <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent">
-                                        Sorting Complete!
-                                    </h1>
-                                    <p className="text-2xl text-purple-300">All {totalWizards} wizards have been sorted</p>
+                                <div id="results-content">
+                                    <div className="text-center mb-8">
+                                        <div className="text-7xl mb-4">🏰</div>
+                                        <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent">
+                                            Sorting Complete!
+                                        </h1>
+                                        <p className="text-2xl text-purple-300">Total {totalSorted} wizards sorted</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-4 gap-6">
+                                        {houses.map((house, index) => (
+                                            <div key={house.name} className={`bg-gradient-to-br ${house.color} rounded-xl p-6 border-4 border-white/30`}>
+                                                <div className="text-center mb-4">
+                                                    <div className="text-6xl mb-2">{house.emoji}</div>
+                                                    <h2 className="text-3xl font-bold text-white">{house.name}</h2>
+                                                    <p className="text-xl text-white/80 mt-1">{houseCounts[index]} Members</p>
+                                                </div>
+                                                <div className="bg-black/30 rounded-lg p-3 house-column">
+                                                    {houseMembers[index].map((member, idx) => (
+                                                        <div key={idx} className="bg-white/20 rounded-lg px-3 py-2 mb-2 text-white text-base font-semibold">
+                                                            {idx + 1}. {member}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    {houses.map((house, index) => (
-                                        <div key={house.name} className={`bg-gradient-to-br ${house.color} rounded-xl p-8 border-4 border-white/30`}>
-                                            <div className="text-center mb-6">
-                                                <div className="text-7xl mb-3">{house.emoji}</div>
-                                                <h2 className="text-4xl font-bold text-white">{house.name}</h2>
-                                                <p className="text-2xl text-white/80 mt-2">{houseCounts[index]} Members</p>
-                                            </div>
-                                            <div className="bg-black/30 rounded-lg p-4 max-h-64 overflow-y-auto">
-                                                {houseMembers[index].map((member, idx) => (
-                                                    <div key={idx} className="bg-white/20 rounded-lg px-4 py-3 mb-2 text-white text-lg font-semibold animate-fade-in">
-                                                        {idx + 1}. {member}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <div className="text-center">
+                                <div className="text-center flex gap-4 justify-center">
+                                    <button
+                                        onClick={downloadPDF}
+                                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200 flex items-center justify-center gap-2"
+                                    >
+                                        <span className="text-2xl">📄</span>
+                                        Download PDF
+                                    </button>
                                     <button
                                         onClick={reset}
-                                        className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200 flex items-center justify-center gap-2 mx-auto"
+                                        className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white text-2xl font-bold py-4 px-8 rounded-lg transform hover:scale-105 transition-all duration-200 flex items-center justify-center gap-2"
                                     >
                                         <span className="text-2xl">🔄</span>
                                         Start New Ceremony
